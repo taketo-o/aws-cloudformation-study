@@ -1,8 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Spring Boot on EC2 behind ALB
+Description: Spring Boot on EC2 behind ALB (secure version)
 
 Resources:
 
+  # =========================
+  # VPC
+  # =========================
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -13,34 +16,49 @@ Resources:
         - Key: Name
           Value: aws-study-vpc
 
-  SubnetAZ1a:
+  # =========================
+  # Public Subnets (EC2 / ALB)
+  # =========================
+  SubnetPublic1a:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.1.0/24
       AvailabilityZone: ap-northeast-1a
       MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: aws-study-subnet1a
 
-  SubnetAZ1c:
+  SubnetPublic1c:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.2.0/24
       AvailabilityZone: ap-northeast-1c
       MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: aws-study-subnet1c
 
+  # =========================
+  # Private Subnets (RDS)
+  # =========================
+  SubnetPrivate1a:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: ap-northeast-1a
+      MapPublicIpOnLaunch: false
+
+  SubnetPrivate1c:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: ap-northeast-1c
+      MapPublicIpOnLaunch: false
+
+  # =========================
+  # Internet Gateway
+  # =========================
   InternetGateway:
     Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: aws-study-gw
 
   GatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -48,13 +66,13 @@ Resources:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
+  # =========================
+  # Route Table
+  # =========================
   RouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: aws-study-route
 
   RouteInternet:
     Type: AWS::EC2::Route
@@ -64,23 +82,27 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  RouteLocal1:
+  RouteAssoc1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref RouteTable
-      SubnetId: !Ref SubnetAZ1a
+      SubnetId: !Ref SubnetPublic1a
 
-  RouteLocal2:
+  RouteAssoc2:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref RouteTable
-      SubnetId: !Ref SubnetAZ1c
+      SubnetId: !Ref SubnetPublic1c
 
-  # Security Group
-  SecurityGroupEC2:
+  # =========================
+  # Security Groups
+  # =========================
+
+  # ALB SG
+  SecurityGroupALB:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: AWS Study EC2
+      GroupDescription: ALB SG
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -88,28 +110,27 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
+  # EC2 SG
+  SecurityGroupEC2:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EC2 SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: 0.0.0.0/0
-
+          CidrIp: 49.109.234.56/32
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          CidrIp: 0.0.0.0/0
+          SourceSecurityGroupId: !Ref SecurityGroupALB
 
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-
-      Tags:
-        - Key: Name
-          Value: aws-study-securityGroup-ec2
-
+  # RDS SG
   SecurityGroupRDS:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: AWS Study RDS
+      GroupDescription: RDS SG
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -117,114 +138,74 @@ Resources:
           ToPort: 3306
           SourceSecurityGroupId: !Ref SecurityGroupEC2
 
-      SecurityGroupEgress:
-        - IpProtocol: -1
-          CidrIp: 0.0.0.0/0
-
-      Tags:
-        - Key: Name
-          Value: aws-study-securityGroup-rds
-
-  # EC2 (Amazon Linux 2023, t2.small)
+  # =========================
+  # EC2
+  # =========================
   EC2:
     Type: AWS::EC2::Instance
     Properties:
       ImageId: ami-0f18986364089c4ab
       InstanceType: t2.small
-      SubnetId: !Ref SubnetAZ1a
-      DisableApiTermination: false
-      InstanceInitiatedShutdownBehavior: stop
-      KeyName: 
-      Monitoring: false
+      SubnetId: !Ref SubnetPublic1a
+      KeyName: aws-study-key
       SecurityGroupIds:
         - !Ref SecurityGroupEC2
 
-      Tags:
-        - Key: Name
-          Value: aws-study-ec2
-
-  # RDS
-  RDS:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      AllocatedStorage: 20
-      AllowMajorVersionUpgrade: false
-      AutoMinorVersionUpgrade: true
-      DBInstanceClass: db.t4g.micro
-      Port: 3306
-      StorageType: gp2
-      BackupRetentionPeriod: 1
-      MasterUsername: root
-      MasterUserPassword: rootroot
-      PreferredBackupWindow: 15:00-16:00
-      PreferredMaintenanceWindow: sun:18:00-sun:19:00
-      DBName: awsstudy
-      Engine: mysql
-      EngineVersion: "8.0.41"
-      LicenseModel: general-public-license
-      DBSubnetGroupName: !Ref DBSubnetGroup
-      VPCSecurityGroups:
-        - !Ref SecurityGroupRDS
-      Tags:
-        - Key: Name
-          Value: aws-study-rds
-
+  # =========================
+  # RDS (PRIVATE)
+  # =========================
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: Created from CloudFormation
+      DBSubnetGroupDescription: private subnets
       SubnetIds:
-        - !Ref SubnetAZ1a
-        - !Ref SubnetAZ1c
+        - !Ref SubnetPrivate1a
+        - !Ref SubnetPrivate1c
 
-  # ELB
-  ELB:
+  RDS:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: mysql
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: 20
+      DBName: awsstudy
+      MasterUsername: root
+      MasterUserPassword: rootroot
+      VPCSecurityGroups:
+        - !Ref SecurityGroupRDS
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: false
+
+  # =========================
+  # ALB
+  # =========================
+  ALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: aws-study-elb
       Scheme: internet-facing
       Type: application
       SecurityGroups:
-        - !Ref SecurityGroupEC2
+        - !Ref SecurityGroupALB
       Subnets:
-        - !Ref SubnetAZ1a
-        - !Ref SubnetAZ1c
+        - !Ref SubnetPublic1a
+        - !Ref SubnetPublic1c
 
-      Tags:
-        - Key: Name
-          Value: aws-study-elb
-
-  ELBTargetGroup:
+  TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: aws-study-elb-target-group
       Port: 8080
       Protocol: HTTP
       VpcId: !Ref VPC
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 2
-      HealthCheckTimeoutSeconds: 5
-      HealthCheckProtocol: HTTP
-      HealthCheckPath: /
-      HealthCheckPort: traffic-port
-      HealthCheckIntervalSeconds: 10
-      Matcher:
-        HttpCode: 200
-
       Targets:
         - Id: !Ref EC2
           Port: 8080
 
-      Tags:
-        - Key: Name
-          Value: aws-study-elb-target-group
-
-  ELBListener:
+  Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
-      LoadBalancerArn: !Ref ELB
-      DefaultActions:
-        - TargetGroupArn: !Ref ELBTargetGroup
-          Type: forward
+      LoadBalancerArn: !Ref ALB
       Port: 80
-      Protocol: HTTP 
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
