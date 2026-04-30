@@ -120,7 +120,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: 49.109.234.56/32
+          CidrIp: 118.9.136.138/32
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
@@ -169,8 +169,8 @@ Resources:
       DBInstanceClass: db.t4g.micro
       AllocatedStorage: 20
       DBName: awsstudy
-      MasterUsername: root
-      MasterUserPassword: rootroot
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
       VPCSecurityGroups:
         - !Ref SecurityGroupRDS
       DBSubnetGroupName: !Ref DBSubnetGroup
@@ -209,3 +209,16 @@ Resources:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
+
+# =========================
+# Parameters
+# =========================
+
+Parameters:
+  DBUsername:
+    Type: String
+    Default: root
+
+  DBPassword:
+    Type: String
+    NoEcho: true
