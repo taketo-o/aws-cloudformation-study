@@ -147,7 +147,7 @@ Resources:
       ImageId: ami-0f18986364089c4ab
       InstanceType: t2.small
       SubnetId: !Ref SubnetPublic1a
-      KeyName: aws-study-key
+      KeyName: 
       SecurityGroupIds:
         - !Ref SecurityGroupEC2
 
