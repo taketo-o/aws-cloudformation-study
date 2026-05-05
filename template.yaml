@@ -18,6 +18,10 @@ Parameters:
     Type: String
     Description: Email address for CloudWatch alarm notifications
 
+  KeyPairName: 
+   Type: AWS::EC2::KeyPair::KeyName
+   Description: EC2 Key Pair Name
+
 # ======================================================
 # Resources
 # ======================================================
@@ -162,7 +166,7 @@ Resources:
     Properties:
       ImageId: ami-0f18986364089c4ab
       InstanceType: t2.small
-      KeyName: aws-study-key
+      KeyName: !Ref KeyPairName
       SubnetId: !Ref SubnetPublic1a
       SecurityGroupIds:
         - !Ref SecurityGroupEC2
