@@ -1,11 +1,35 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Spring Boot on EC2 behind ALB (secure version)
 
+# ======================================================
+# Parameters
+# ======================================================
+Parameters:
+  DBUsername:
+    Type: String
+    Description: RDS master username
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: RDS master password
+
+  NotificationEmail:
+    Type: String
+    Description: Email address for CloudWatch alarm notifications
+
+  KeyPairName: 
+   Type: AWS::EC2::KeyPair::KeyName
+   Description: EC2 Key Pair Name
+
+# ======================================================
+# Resources
+# ======================================================
 Resources:
 
-  # =========================
-  # VPC
-  # =========================
+# =========================
+# VPC
+# =========================
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -16,9 +40,9 @@ Resources:
         - Key: Name
           Value: aws-study-vpc
 
-  # =========================
-  # Public Subnets (EC2 / ALB)
-  # =========================
+# =========================
+# Public Subnets
+# =========================
   SubnetPublic1a:
     Type: AWS::EC2::Subnet
     Properties:
@@ -35,9 +59,9 @@ Resources:
       AvailabilityZone: ap-northeast-1c
       MapPublicIpOnLaunch: true
 
-  # =========================
-  # Private Subnets (RDS)
-  # =========================
+# =========================
+# Private Subnets
+# =========================
   SubnetPrivate1a:
     Type: AWS::EC2::Subnet
     Properties:
@@ -54,9 +78,9 @@ Resources:
       AvailabilityZone: ap-northeast-1c
       MapPublicIpOnLaunch: false
 
-  # =========================
-  # Internet Gateway
-  # =========================
+# =========================
+# Internet Gateway
+# =========================
   InternetGateway:
     Type: AWS::EC2::InternetGateway
 
@@ -66,9 +90,9 @@ Resources:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
-  # =========================
-  # Route Table
-  # =========================
+# =========================
+# Route Table
+# =========================
   RouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -94,15 +118,13 @@ Resources:
       RouteTableId: !Ref RouteTable
       SubnetId: !Ref SubnetPublic1c
 
-  # =========================
-  # Security Groups
-  # =========================
-
-  # ALB SG
+# =========================
+# Security Groups
+# =========================
   SecurityGroupALB:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: ALB SG
+      GroupDescription: ALB Security Group
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -110,11 +132,10 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
-  # EC2 SG
   SecurityGroupEC2:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: EC2 SG
+      GroupDescription: EC2 Security Group
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -126,11 +147,10 @@ Resources:
           ToPort: 8080
           SourceSecurityGroupId: !Ref SecurityGroupALB
 
-  # RDS SG
   SecurityGroupRDS:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: RDS SG
+      GroupDescription: RDS Security Group
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -138,26 +158,29 @@ Resources:
           ToPort: 3306
           SourceSecurityGroupId: !Ref SecurityGroupEC2
 
-  # =========================
-  # EC2
-  # =========================
+# =========================
+# EC2
+# =========================
   EC2:
     Type: AWS::EC2::Instance
     Properties:
       ImageId: ami-0f18986364089c4ab
       InstanceType: t2.small
+      KeyName: !Ref KeyPairName
       SubnetId: !Ref SubnetPublic1a
-      KeyName: aws-study-key
       SecurityGroupIds:
         - !Ref SecurityGroupEC2
+      Tags:
+        - Key: Name
+          Value: SpringBootServer
 
-  # =========================
-  # RDS (PRIVATE)
-  # =========================
+# =========================
+# RDS
+# =========================
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: private subnets
+      DBSubnetGroupDescription: Private subnets for RDS
       SubnetIds:
         - !Ref SubnetPrivate1a
         - !Ref SubnetPrivate1c
@@ -175,10 +198,12 @@ Resources:
         - !Ref SecurityGroupRDS
       DBSubnetGroupName: !Ref DBSubnetGroup
       PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      MultiAZ: false
 
-  # =========================
-  # ALB
-  # =========================
+# =========================
+# ALB
+# =========================
   ALB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -190,12 +215,15 @@ Resources:
         - !Ref SubnetPublic1a
         - !Ref SubnetPublic1c
 
+        
+
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Port: 8080
       Protocol: HTTP
       VpcId: !Ref VPC
+      HealthCheckPath: /
       Targets:
         - Id: !Ref EC2
           Port: 8080
@@ -211,13 +239,146 @@ Resources:
           TargetGroupArn: !Ref TargetGroup
 
 # =========================
-# Parameters
+# SNS
 # =========================
+  AlarmSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: cloudwatch-alarm-topic
 
-Parameters:
-  DBUsername:
-    Type: String
+  AlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+      TopicArn: !Ref AlarmSNSTopic
 
-  DBPassword:
-    Type: String
-    NoEcho: true
+# =========================
+# CloudWatch Alarms
+# =========================
+  EC2CPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: EC2 CPU > 80%
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlarmSNSTopic
+
+  EC2StatusCheckAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: EC2 Status Check Failed
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmSNSTopic
+
+  ALB5XXAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: ALB 5XX Errors
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_ELB_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt ALB.LoadBalancerFullName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlarmSNSTopic
+
+# =========================
+# WAF
+# =========================
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: MyWebACL
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: MyWebACLMetric
+      Rules:
+        - Name: AWSManagedCommonRules
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: CommonRulesMetric
+
+        - Name: AWSManagedKnownBadInputs
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: KnownBadInputsMetric
+
+        - Name: AWSManagedIPReputation
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: IPReputationMetric
+
+  WebACLAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref ALB
+      WebACLArn: !GetAtt WebACL.Arn
+
+# ======================================================
+# Outputs
+# ======================================================
+Outputs:
+  ALBDNSName:
+    Description: ALB DNS Name
+    Value: !GetAtt ALB.DNSName
+
+  WebACLArn:
+    Description: WAF WebACL ARN
+    Value: !GetAtt WebACL.Arn
+
+  SNSTopicArn:
+    Description: SNS Topic ARN
+    Value: !Ref AlarmSNSTopic
